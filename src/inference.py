@@ -240,8 +240,13 @@ def parse_args():
     p.add_argument("--checkpoint", default=os.path.join(MODEL_DIR, "ltx-2.3-audio-only.safetensors"))
     p.add_argument("--full-checkpoint", default=os.path.join(MODEL_DIR, "ltx-2.3-22b-distilled.safetensors"))
     p.add_argument("--gemma-root", default=GEMMA_DIR)
-    p.add_argument("--bnb-4bit", action="store_true",
-                   help="Load Gemma text encoder in 4-bit (bitsandbytes). Saves ~15 GB VRAM.")
+    p.add_argument("--bnb-4bit", dest="bnb_4bit", action="store_true", default=True,
+                   help="Load Gemma text encoder via the bitsandbytes 4-bit path "
+                        "(required for the default unsloth/gemma-3-12b-it-bnb-4bit "
+                        "pre-quantized weights). Default: on.")
+    p.add_argument("--no-bnb-4bit", dest="bnb_4bit", action="store_false",
+                   help="Disable the bitsandbytes path (use only if --gemma-root "
+                        "points at an unquantized Gemma checkpoint).")
     p.add_argument("--lora", default=None, help="Path to trained IC-LoRA .safetensors (audio-only)")
     p.add_argument("--lora-rank", type=int, default=128, help="LoRA rank (must match training)")
     p.add_argument("--id-guidance-scale", type=float, default=3.0, help="Identity guidance scale (0=disabled)")
@@ -408,7 +413,7 @@ def main():
     use_cfg = args.cfg_scale > 1.0
     logging.info("Encoding prompt...")
     pe = PromptEncoder(checkpoint_path=args.full_checkpoint, gemma_root=args.gemma_root, dtype=dtype, device=device,
-                       use_bnb_4bit=args.bnb_4bit)
+                       use_bnb_4bit=args.bnb_4bit, warm=True)
     prompts_to_encode = [args.prompt]
     if use_cfg:
         prompts_to_encode.append(args.negative_prompt)

@@ -14,7 +14,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 logger = logging.getLogger(__name__)
 
 DRAMABOX_REPO = "ResembleAI/Dramabox"
-GEMMA_REPO = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+GEMMA_REPO = "unsloth/gemma-3-12b-it-bnb-4bit"
 
 # Default cache directory
 DEFAULT_CACHE = os.environ.get(
@@ -59,9 +59,9 @@ def get_model_path(name: str, cache_dir: str = None) -> str:
 
 
 def get_gemma_path(cache_dir: str = None) -> str:
-    """Download Gemma 3 12B IT (q4 unquantized) and return local path.
-
-    Returns the directory containing the model files.
+    """Download Gemma 3 12B IT (pre-quantized bnb-4bit via unsloth) and return
+    the snapshot directory. Using the pre-quantized variant skips runtime
+    bitsandbytes quantization and ~halves the Gemma load time.
     """
     cache_dir = cache_dir or DEFAULT_CACHE
     logger.info(f"Fetching Gemma from {GEMMA_REPO}...")
@@ -83,7 +83,7 @@ def get_all_paths(cache_dir: str = None) -> dict:
             'transformer': '/path/to/transformer.safetensors',
             'audio_components': '/path/to/audio-components.safetensors',
             'silence_latent': '/path/to/silence_latent_frame.pt',
-            'gemma_root': '/path/to/gemma-3-12b-it-qat-q4_0-unquantized/',
+            'gemma_root': '/path/to/unsloth/gemma-3-12b-it-bnb-4bit/',
         }
     """
     cache_dir = cache_dir or DEFAULT_CACHE

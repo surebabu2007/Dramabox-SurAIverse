@@ -60,7 +60,7 @@ def estimate_duration(prompt, multiplier=1.1):
 
 class TTSServer:
     def __init__(self, checkpoint=None, full_checkpoint=None, gemma_root=None,
-                 device="cuda", dtype="bf16", compile_model=True, bnb_4bit=False):
+                 device="cuda", dtype="bf16", compile_model=True, bnb_4bit=True):
         MODELS = APP_DIR / "models"
         self.checkpoint = checkpoint or str(MODELS / "ltx-2.3-22b-dev-audio-only-v13-merged.safetensors")
         self.full_checkpoint = full_checkpoint or os.environ.get(
@@ -277,10 +277,13 @@ if __name__ == "__main__":
     p.add_argument("--device", default="cuda")
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
     p.add_argument("--no-compile", action="store_true")
-    p.add_argument("--bnb-4bit", action="store_true", help="Use bitsandbytes 4-bit for Gemma (saves ~15GB VRAM)")
+    p.add_argument("--no-bnb-4bit", action="store_true",
+                   help="Disable bitsandbytes 4-bit path (default: on, since the default "
+                        "unsloth Gemma checkpoint is pre-quantized).")
     args = p.parse_args()
 
-    server = TTSServer(device=args.device, dtype=args.dtype, compile_model=not args.no_compile, bnb_4bit=args.bnb_4bit)
+    server = TTSServer(device=args.device, dtype=args.dtype, compile_model=not args.no_compile,
+                       bnb_4bit=not args.no_bnb_4bit)
 
     # First call - includes any warmup
     logging.info("=== First request ===")

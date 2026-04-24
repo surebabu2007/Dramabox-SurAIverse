@@ -419,24 +419,50 @@ class PromptEncoder:
                 _log.info(f"Audio-only mode: freed video components, saved {freed/1e9:.1f}GB VRAM")
 
     def _load_bnb_4bit_encoder(self, gemma_root: str):
-        """Load Gemma with bitsandbytes 4-bit quantization for reduced VRAM."""
+        """Load Gemma with bitsandbytes 4-bit quantization for reduced VRAM.
+
+        Auto-detects whether the checkpoint at ``gemma_root`` is already
+        pre-quantized (has ``quantization_config`` in ``config.json``) — in
+        that case we skip our explicit ``BitsAndBytesConfig`` and let
+        transformers honour the checkpoint's own quantization metadata.
+        Passing our own config on top of a pre-quantized checkpoint causes
+        shape mismatches when transformers tries to quantize already-packed
+        4-bit weights a second time.
+        """
+        import json
         import logging
+        import os
         from transformers import Gemma3ForConditionalGeneration, BitsAndBytesConfig
         from ltx_core.text_encoders.gemma.tokenizer import LTXVGemmaTokenizer
         from ltx_core.text_encoders.gemma.encoders.base_encoder import GemmaTextEncoder
 
-        logging.info("Loading Gemma with bitsandbytes 4-bit quantization...")
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=self._dtype,
-        )
-        hf_model = Gemma3ForConditionalGeneration.from_pretrained(
-            gemma_root,
-            quantization_config=bnb_config,
-            device_map=str(self._device),
-            torch_dtype=self._dtype,
-        )
+        # Inspect config.json for an existing quantization_config.
+        prequantized = False
+        cfg_path = os.path.join(gemma_root, "config.json")
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path) as f:
+                    cfg = json.load(f)
+                prequantized = "quantization_config" in cfg
+            except Exception:
+                pass
+
+        from_kwargs = {
+            "device_map": str(self._device),
+            "torch_dtype": self._dtype,
+        }
+        if prequantized:
+            logging.info(
+                "Loading pre-quantized Gemma (bnb-4bit) — using checkpoint's own quantization_config"
+            )
+        else:
+            logging.info("Loading Gemma with runtime bitsandbytes 4-bit quantization...")
+            from_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=self._dtype,
+            )
+        hf_model = Gemma3ForConditionalGeneration.from_pretrained(gemma_root, **from_kwargs)
         tokenizer = LTXVGemmaTokenizer(
             str(find_matching_file(gemma_root, "tokenizer.model").parent), 1024
         )
