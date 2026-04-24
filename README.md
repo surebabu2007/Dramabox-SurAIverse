@@ -19,8 +19,7 @@ DramaBox/
 ├── evals/
 │   ├── eval_short.txt        # 30 short prompts (~5-15s)
 │   ├── eval_long.txt         # 15 long prompts (~20-37s)
-│   ├── eval_expressive.txt   # 15 expressive prompts (laughs, sighs, stammers)
-│   └── eval_multilang.txt    # 50 multilingual prompts (10 languages x 5)
+│   └── eval_expressive.txt   # 15 expressive prompts (laughs, sighs, stammers)
 ├── scripts/
 │   ├── inference.sh          # Inference wrapper
 │   └── eval.sh               # Evaluation runner
@@ -110,6 +109,10 @@ bash scripts/eval.sh --eval expressive --output eval_results/
 - Break long dialogue into segments with acting directions between them
 - End prompt at the last closing quote mark (no trailing descriptions)
 
-## Supported Languages
+## Language
 
-English, Hindi, Spanish, German, French, Japanese, Italian, Korean, Portuguese, Mandarin
+English.
+
+## License
+
+Built on [LTX-2](https://github.com/Lightricks/LTX-2) by Lightricks. Distributed under the LTX-2 Community License Agreement — see [`LICENSE`](LICENSE).

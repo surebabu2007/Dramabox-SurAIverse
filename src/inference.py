@@ -74,30 +74,89 @@ def detect_model_type(checkpoint_path: str) -> str:
     return "distilled"
 
 
+_LAUGH_VERBS = {
+    # base seconds per occurrence; gets scaled by the modifier found nearby.
+    # Verb regex covers inflections: laugh/laughs/laughed/laughing.
+    r"\blaugh(?:s|ed|ing)?\b": 1.5,
+    r"\bcackl(?:e|es|ed|ing)\b": 1.5,
+    r"\bchuckl(?:e|es|ed|ing)\b": 1.0,
+    r"\bgiggl(?:e|es|ed|ing)\b": 1.0,
+    r"\bsnicker(?:s|ed|ing)?\b": 0.8,
+    r"\bcru?el laugh\b": 1.5,
+}
+
+
+def _contextual_laugh_duration(text: str) -> float:
+    """Context-aware laugh budget.
+
+    For each laugh verb in the prompt, look at the adjective/adverb that
+    modifies it and scale the base duration:
+      - short modifiers  (briefly, softly, once)     -> 0.4x base
+      - long modifiers   (maniacally, heartily, ...) -> 1.2x base
+      - default (no mod / neutral)                   -> 1.0x base
+    Also reward phonetic repetition inside quotes -- 'Hahahahahaha' buys more
+    time than 'Haha' -- at ~0.2s per extra repeated syllable.
+    """
+    # "softly" / "quietly" describe volume not length, so keep at default 1.0x.
+    short_mod = re.compile(
+        r"^\s*(?:[a-z]+ly )?(?:briefly|shortly|once|quickly)",
+        re.IGNORECASE)
+    long_mod = re.compile(
+        r"^\s*(?:[a-z]+ly )?(?:maniacally|heartily|uproariously|uncontrollably|"
+        r"hysterically|darkly|wickedly|evilly|loudly|long)"
+        r"|^\s*between phrases", re.IGNORECASE)
+
+    total = 0.0
+    for pat, base_dur in _LAUGH_VERBS.items():
+        for m in re.finditer(pat, text, re.IGNORECASE):
+            ctx = text[m.end(): m.end() + 40]
+            if short_mod.match(ctx):
+                total += base_dur * 0.4
+            elif long_mod.match(ctx):
+                total += base_dur * 1.2
+            else:
+                total += base_dur
+
+    # Phonetic laugh repetition inside quotes:
+    #   'Haha' = 2 syllables (base, no bonus)
+    #   'Hahahaha' = 4 syllables (+0.4s)
+    #   'Hehehehahahahahahahaha' ~ 10 syllables (+1.6s)
+    for q in re.findall(r'"([^"]+)"', text) + re.findall(r"'((?:[^']|'(?![\s.,!?)\]]))+)'", text):
+        for run in re.findall(r"(?:h[ae]){3,}|(?:h[ae][ \-]?){3,}", q, re.IGNORECASE):
+            syls = len(re.findall(r"h[ae]", run, re.IGNORECASE))
+            total += 0.2 * max(syls - 2, 0)
+    return total
+
+
 def _estimate_nonverbal_duration(text: str) -> float:
-    """Estimate extra duration for non-verbal sounds and actions in the prompt."""
+    """Estimate extra duration for non-verbal sounds and actions in the prompt.
+
+    Laugh-verb handling lives in ``_contextual_laugh_duration`` so cackle /
+    chuckle / laugh budgets scale with the adjective ("maniacally" vs
+    "briefly") and with the repetition length of 'Ha'/'He' tokens inside
+    quotes.
+    """
     PATTERNS = {
-        # Laughter/chuckles
-        r'\blaughs?\b': 1.5, r'\bcackles?\b': 1.5, r'\bchuckles?\b': 1.0,
-        r'\bgiggles?\b': 1.0, r'\bcru?el laugh\b': 1.5,
-        # Breathing/sighs
+        # Breathing / sighs
         r'\bsighs?\b': 0.8, r'\bshaky breath\b': 1.0, r'\bbreathing deeply\b': 1.0,
         r'\bgasps?\b': 0.5, r'\bburps?\b': 0.5, r'\byawns?\b': 1.0,
         r'\bpants?\b': 0.8, r'\bwheezes?\b': 0.8, r'\bcoughs?\b': 0.8,
         r'\bsniffles?\b': 0.5, r'\bsnorts?\b': 0.3, r'\bgroans?\b': 0.8,
-        # Pauses
-        r'\blong pause\b': 2.0, r'\bpauses? briefly\b': 0.5,
-        r'\bpauses?\b': 1.0, r'\bsilence\b': 1.5,
-        r'\blets? the .{1,20} hang\b': 1.5, r'\blets? .{1,20} sink in\b': 1.5,
+        # Pauses (trimmed; earlier values over-budgeted silence)
+        r'\blong pause\b': 1.0, r'\bpauses? briefly\b': 0.3,
+        r'\bpauses?\b': 0.5, r'\bsilence\b': 1.0,
+        r'\blets? the .{1,20} hang\b': 1.0, r'\blets? .{1,20} sink in\b': 1.0,
         # Physical actions that produce sound
         r'\bslams?\b': 0.5, r'\bclaps?\b': 0.3,
         r'\bdraws? (?:his|her|a) sword\b': 0.5,
-        r'\btakes? a (?:drag|swig|sip|drink)\b': 1.0,
+        r'\btakes? a (?:drag|swig|sip|drink)\b': 0.5,
         r'\bwhistles?\b': 1.0, r'\bhums?\b': 0.8,
         # Vocal actions (not in quotes but take time)
-        r'\bmutters?\b': 1.5, r'\bmumbles?\b': 1.0, r'\bwhispers?\b': 0.5,
+        r'\bmutters?\b': 1.5, r'\bmumbles?\b': 1.0, r'\bwhispers?\b': 0.0,
         r'\bclears? (?:his|her) throat\b': 0.5, r'\bgulps?\b': 0.5,
-        r'\bswallows?\b': 0.5, r'\bsnickers?\b': 0.8,
+        r'\bswallows?\b': 0.5,
+        # (laugh / chuckle / cackle / giggle / snicker handled by
+        # _contextual_laugh_duration below -- modifier-aware, not flat.)
         # Emotional transitions
         r'\bvoice (?:breaks?|cracks?|trembles?|drops?|rises?)\b': 0.5,
         r'\bsteadies? (?:him|her)self\b': 1.0,
@@ -110,6 +169,7 @@ def _estimate_nonverbal_duration(text: str) -> float:
     extra = 0.0
     for pattern, dur in PATTERNS.items():
         extra += dur * len(re.findall(pattern, text, re.IGNORECASE))
+    extra += _contextual_laugh_duration(text)
     return extra
 
 
@@ -180,6 +240,8 @@ def parse_args():
     p.add_argument("--checkpoint", default=os.path.join(MODEL_DIR, "ltx-2.3-audio-only.safetensors"))
     p.add_argument("--full-checkpoint", default=os.path.join(MODEL_DIR, "ltx-2.3-22b-distilled.safetensors"))
     p.add_argument("--gemma-root", default=GEMMA_DIR)
+    p.add_argument("--bnb-4bit", action="store_true",
+                   help="Load Gemma text encoder in 4-bit (bitsandbytes). Saves ~15 GB VRAM.")
     p.add_argument("--lora", default=None, help="Path to trained IC-LoRA .safetensors (audio-only)")
     p.add_argument("--lora-rank", type=int, default=128, help="LoRA rank (must match training)")
     p.add_argument("--id-guidance-scale", type=float, default=3.0, help="Identity guidance scale (0=disabled)")
@@ -345,7 +407,8 @@ def main():
     # ---- Encode prompt ----
     use_cfg = args.cfg_scale > 1.0
     logging.info("Encoding prompt...")
-    pe = PromptEncoder(checkpoint_path=args.full_checkpoint, gemma_root=args.gemma_root, dtype=dtype, device=device)
+    pe = PromptEncoder(checkpoint_path=args.full_checkpoint, gemma_root=args.gemma_root, dtype=dtype, device=device,
+                       use_bnb_4bit=args.bnb_4bit)
     prompts_to_encode = [args.prompt]
     if use_cfg:
         prompts_to_encode.append(args.negative_prompt)
