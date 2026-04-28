@@ -372,42 +372,64 @@ def run_validation(lora_path, val_config_path, output_dir, step, lora_rank=128):
 # ─── Args ───
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Audio-Only IC-LoRA Training for Voice Cloning")
-    p.add_argument("--data-dir", required=True, nargs="+")
-    p.add_argument("--speaker-index", required=True, nargs="+")
-    p.add_argument("--output-dir", default=os.path.join(MODEL_DIR, "tts_iclora_v1"))
-    p.add_argument("--checkpoint", default=os.path.join(MODEL_DIR, "ltx-2.3-audio-only.safetensors"))
-    p.add_argument("--full-checkpoint", default=os.path.join(MODEL_DIR, "ltx-2.3-22b-distilled.safetensors"))
-    p.add_argument("--base-model", choices=["distilled", "dev"], default="distilled",
+    # First pass: pull out --config so its values can become argparse defaults.
+    cfg_parser = argparse.ArgumentParser(add_help=False)
+    cfg_parser.add_argument("--config", default=None,
+                            help="YAML file with default values for any of the flags below. "
+                                 "Explicit CLI flags still override the YAML.")
+    cfg_args, remaining = cfg_parser.parse_known_args()
+    yaml_defaults: dict = {}
+    if cfg_args.config:
+        import yaml as _yaml
+        with open(cfg_args.config) as f:
+            yaml_defaults = _yaml.safe_load(f) or {}
+        # YAML keys are dashes-or-underscores → normalize to argparse dest (underscore).
+        yaml_defaults = {k.replace("-", "_"): v for k, v in yaml_defaults.items()}
+
+    def _yaml(name, fallback):
+        return yaml_defaults.get(name, fallback)
+
+    p = argparse.ArgumentParser(
+        parents=[cfg_parser],
+        description="Audio-Only IC-LoRA Training for Voice Cloning",
+    )
+    p.add_argument("--data-dir", required="data_dir" not in yaml_defaults,
+                   nargs="+", default=_yaml("data_dir", None))
+    p.add_argument("--speaker-index", required="speaker_index" not in yaml_defaults,
+                   nargs="+", default=_yaml("speaker_index", None))
+    p.add_argument("--output-dir", default=_yaml("output_dir", os.path.join(MODEL_DIR, "tts_iclora_v1")))
+    p.add_argument("--checkpoint", default=_yaml("checkpoint", os.path.join(MODEL_DIR, "dramabox-dit-v1.safetensors")))
+    p.add_argument("--full-checkpoint", default=_yaml("full_checkpoint", os.path.join(MODEL_DIR, "dramabox-audio-components.safetensors")))
+    p.add_argument("--base-model", choices=["distilled", "dev"], default=_yaml("base_model", "dev"),
                    help="Base model type: distilled uses DistilledTimestepSampler, dev uses ShiftedLogitNormal")
-    p.add_argument("--lora-rank", type=int, default=128)
-    p.add_argument("--lora-alpha", type=int, default=128)
-    p.add_argument("--lora-dropout", type=float, default=0.0,
+    p.add_argument("--lora-rank", type=int, default=_yaml("lora_rank", 128))
+    p.add_argument("--lora-alpha", type=int, default=_yaml("lora_alpha", 128))
+    p.add_argument("--lora-dropout", type=float, default=_yaml("lora_dropout", 0.0),
                    help="Dropout applied to LoRA A/B matrices during training. "
                         "Recommended ~0.1 for small datasets to regularize.")
-    p.add_argument("--resume-lora", default=None)
-    p.add_argument("--resume-step-offset", type=int, default=None,
+    p.add_argument("--resume-lora", default=_yaml("resume_lora", None))
+    p.add_argument("--resume-step-offset", type=int, default=_yaml("resume_step_offset", None),
                    help="Step to add when naming saved checkpoints. If None, inferred "
                         "from --resume-lora filename (e.g. lora_step_10000.safetensors → 10000). "
                         "Set to 0 to start numbering at 0 regardless.")
-    p.add_argument("--ref-ratio", type=float, default=0.3,
+    p.add_argument("--ref-ratio", type=float, default=_yaml("ref_ratio", 0.3),
                    help="Fraction of target length to use as reference (default 0.3)")
-    p.add_argument("--max-ref-tokens", type=int, default=200,
+    p.add_argument("--max-ref-tokens", type=int, default=_yaml("max_ref_tokens", 200),
                    help="Maximum reference tokens after patchification (default 200)")
-    p.add_argument("--text-dropout", type=float, default=0.0,
+    p.add_argument("--text-dropout", type=float, default=_yaml("text_dropout", 0.0),
                    help="Probability of dropping text conditioning (forces reliance on voice ref)")
-    p.add_argument("--steps", type=int, default=30000)
-    p.add_argument("--lr", type=float, default=3e-5)
-    p.add_argument("--lr-scheduler", choices=["cosine", "linear", "constant"], default="cosine")
-    p.add_argument("--batch-size", type=int, default=1)
-    p.add_argument("--grad-accum", type=int, default=4)
-    p.add_argument("--max-grad-norm", type=float, default=1.0)
-    p.add_argument("--save-every", type=int, default=1000)
-    p.add_argument("--log-every", type=int, default=50)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--warmup-steps", type=int, default=100)
-    p.add_argument("--val-config", default=None)
-    return p.parse_args()
+    p.add_argument("--steps", type=int, default=_yaml("steps", 30000))
+    p.add_argument("--lr", type=float, default=_yaml("lr", 3e-5))
+    p.add_argument("--lr-scheduler", choices=["cosine", "linear", "constant"], default=_yaml("lr_scheduler", "cosine"))
+    p.add_argument("--batch-size", type=int, default=_yaml("batch_size", 1))
+    p.add_argument("--grad-accum", type=int, default=_yaml("grad_accum", 4))
+    p.add_argument("--max-grad-norm", type=float, default=_yaml("max_grad_norm", 1.0))
+    p.add_argument("--save-every", type=int, default=_yaml("save_every", 1000))
+    p.add_argument("--log-every", type=int, default=_yaml("log_every", 50))
+    p.add_argument("--seed", type=int, default=_yaml("seed", 42))
+    p.add_argument("--warmup-steps", type=int, default=_yaml("warmup_steps", 100))
+    p.add_argument("--val-config", default=_yaml("val_config", None))
+    return p.parse_args(remaining)
 
 
 # ─── Main ───

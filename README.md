@@ -1,48 +1,28 @@
-# Dramabox - Expressive TTS with Voice Cloning
+# DramaBox — Expressive TTS with Voice Cloning
 
-Prompt-driven TTS with voice cloning built on a 3.3B Diffusion Transformer with flow matching.
+Prompt-driven TTS with voice cloning, built as an IC-LoRA fine-tune of the **LTX-2.3 3.3B audio-only**. The prompt itself controls speaker identity, emotion, delivery style, laughs, sighs, pauses and transitions; an optional 10-second voice reference clones the target timbre.
 
-## Folder Structure
-
-```
-DramaBox/
-├── src/
-│   ├── inference.py          # TTS inference with voice cloning
-│   ├── inference_server.py   # Warm server (~2.5s per generation)
-│   ├── audio_conditioning.py # Reference audio conditioning
-│   └── model_downloader.py   # Auto-download models from HuggingFace
-├── patches/
-│   ├── attention.py          # dtype fix for mask allocation
-│   └── guiders.py            # Per-token CFG clamping
-├── assets/
-│   └── silence_latent_frame.pt
-├── evals/
-│   ├── eval_short.txt        # 30 short prompts (~5-15s)
-│   ├── eval_long.txt         # 15 long prompts (~20-37s)
-│   └── eval_expressive.txt   # 15 expressive prompts (laughs, sighs, stammers)
-├── scripts/
-│   ├── inference.sh          # Inference wrapper
-│   └── eval.sh               # Evaluation runner
-├── app.py                    # Gradio demo app
-├── ltx2/                     # LTX-2 dependency packages
-└── README.md
-```
+| | |
+|---|---|
+| 🤗 **Model** | [`ResembleAI/Dramabox`](https://huggingface.co/ResembleAI/Dramabox) |
+| 🎭 **Demo Space** | [`ResembleAI/Dramabox`](https://huggingface.co/spaces/ResembleAI/Dramabox) (ZeroGPU) |
+| 📜 **License** | LTX-2 Community License — see [`LICENSE`](LICENSE) |
 
 ## Models
 
-Models auto-download from [ResembleAI/Dramabox](https://huggingface.co/ResembleAI/Dramabox) on HuggingFace.
+Auto-downloaded from the HF model repo on first run.
 
-| Model | Size | Description |
-|-------|------|-------------|
-| `dramabox-dit-v1.safetensors` | 6.6 GB | DiT transformer |
-| `dramabox-audio-components.safetensors` | 2.7 GB | Audio VAE + vocoder + text projection |
-| [unsloth/gemma-3-12b-it-bnb-4bit](https://huggingface.co/unsloth/gemma-3-12b-it-bnb-4bit) | ~8 GB | Text encoder (auto-downloaded) |
+| File | Size | Description |
+|---|---|---|
+| `dramabox-dit-v1.safetensors` | 6.6 GB | DiT transformer (LoRA already merged into base) |
+| `dramabox-audio-components.safetensors` | 1.9 GB | Audio embeddings connector + audio text projection + audio VAE + vocoder |
+| [`unsloth/gemma-3-12b-it-bnb-4bit`](https://huggingface.co/unsloth/gemma-3-12b-it-bnb-4bit) | ~8 GB | Text encoder |
 
-**VRAM**: ~24 GB peak | **Speed**: ~2.5s per generation (warm server, H100)
+**VRAM**: ~24 GB peak · **Speed**: ~2.5 s / generation (warm server, H100)
 
 ## Quick Start
 
-### Warm Server (recommended, ~2.5s per request)
+### Warm server (recommended)
 
 ```python
 from src.inference_server import TTSServer
@@ -52,17 +32,11 @@ server = TTSServer(device="cuda")
 server.generate_to_file(
     prompt='A woman speaks warmly, "Hello, how are you today?" She laughs, "Hahaha, it is so good to see you!"',
     output="output.wav",
-    voice_ref="reference.wav",  # optional, 10+ seconds
+    voice_ref="reference.wav",   # optional, 10+ seconds
 )
 ```
 
-### Gradio App
-
-```bash
-GEMINI_API_KEY=your_key CUDA_VISIBLE_DEVICES=4 python app.py
-```
-
-### CLI Inference
+### CLI
 
 ```bash
 python src/inference.py \
@@ -72,42 +46,41 @@ python src/inference.py \
   --cfg-scale 2.5 --stg-scale 1.5
 ```
 
-### Evaluation
+### Gradio app
 
 ```bash
-bash scripts/eval.sh --eval expressive --output eval_results/
+CUDA_VISIBLE_DEVICES=4 python app.py
 ```
 
 ## Inference Settings
 
 | Parameter | Default | Notes |
-|-----------|---------|-------|
-| cfg-scale | 2.5 | Lower = more natural, higher = more text following |
-| stg-scale | 1.5 | Skip-token guidance |
-| rescale | 0 | No rescaling |
-| modality | 1 | No modality guidance |
-| duration-multiplier | 1.1 | 10% breathing room |
-| steps | 30 | Euler flow matching |
+|---|---|---|
+| `cfg-scale` | 2.5 | Lower = more natural, higher = more text-faithful |
+| `stg-scale` | 1.5 | Skip-token guidance |
+| `rescale` | 0 | No rescaling |
+| `modality` | 1 | No modality guidance |
+| `duration-multiplier` | 1.1 | 10% breathing room on auto-estimated length |
+| `steps` | 30 | Euler flow matching |
 
 ## Prompt Writing Guide
 
 **Structure:** `<speaker description>, "<dialogue>" <action direction> "<more dialogue>"`
 
-### What works inside quotes (model produces actual sounds)
+**Inside quotes** (model produces actual sounds):
 - Laughs: `"Hahaha"` `"Hehehe"` (always one word, never separated)
 - Sounds: `"Mmmmm"` `"Ugh"` `"Argh"` `"Ahhh"` `"Hmm"`
 
-### What goes outside quotes (stage directions)
-- `She sighs deeply.` `He gulps nervously.` `A long pause.`
-- `Her voice cracks.` `He clears his throat.` `She scoffs.`
+**Outside quotes** (stage directions):
+- `She sighs deeply.` · `He gulps nervously.` · `A long pause.`
+- `Her voice cracks.` · `He clears his throat.` · `She scoffs.`
 
-### Never inside quotes (model speaks them literally)
-- Ahem, Pfft, Sigh, Gasp, Cough
+**Avoid inside quotes** (model speaks them literally): `Ahem`, `Pfft`, `Sigh`, `Gasp`, `Cough`.
 
-### Tips
-- Match gender/age in speaker description to voice reference
-- Break long dialogue into segments with acting directions between them
-- End prompt at the last closing quote mark (no trailing descriptions)
+**Tips**
+- Match gender/age in the speaker description to the voice reference
+- Break long dialogue into segments with action directions in between
+- End the prompt at the last closing quote mark (no trailing description)
 
 ## Watermarking
 
@@ -117,41 +90,100 @@ Every audio output from `inference.py` and `inference_server.TTSServer.generate_
 import perth, librosa
 wav, sr = librosa.load("output.wav", sr=None, mono=True)
 detector = perth.PerthImplicitWatermarker()
-print(detector.get_watermark(wav, sample_rate=sr))   # confidence ≈ 1.0 for our outputs
+print(detector.get_watermark(wav, sample_rate=sr))   # confidence ≈ 1.0
 ```
 
 Pass `--no-watermark` to `inference.py` (or `watermark=False` to `generate_to_file`) to disable for debugging.
 
-## Training
+## Training a LoRA on top of DramaBox
 
-DramaBox is an IC-LoRA fine-tune of the LTX-2.3 22B audio-only branch. To train your own:
+You can fine-tune your own LoRA using DramaBox itself as the base — no need to start from raw LTX-2.3. Useful for adding a specific speaker, language flavour, or style on top of the existing expressive prior.
+
+### 1. Prepare your index file
+
+The preprocessor accepts four formats. The `text` field is the **target transcript**; if you want to attach a scene-style prompt (the part the model conditions on at inference time), prepend it to the transcript in the same format the model was trained on:
+
+> `A woman speaks warmly, "<your transcript here>"`
+
+Both forms are supported — with or without the prompt wrapper. Without the wrapper the model treats the entry as plain text-to-speech.
+
+**Format A — `manifest` (JSONL)** — recommended for new datasets:
+
+```jsonl
+{"audio_filepath": "wavs/spk01_001.wav", "text": "A woman speaks warmly, \"Hello, how are you today?\""}
+{"audio_filepath": "wavs/spk01_002.wav", "text": "Hello, how are you today?"}
+{"audio_filepath": "wavs/spk02_001.flac", "text": "An exhausted father sighs, \"Sweetie, daddy is asking very nicely.\"", "duration": 4.7}
+```
+
+Fields: `audio_filepath` (or `audio_path`) is required, `text` (or `transcript`) is required, `duration` is optional.
+
+**Format B — `tsv`** — simplest, one line per sample:
+
+```
+wavs/spk01_001.wav	A woman speaks warmly, "Hello, how are you today?"
+wavs/spk01_002.wav	Hello, how are you today?
+```
+
+**Format C — `gemini_synthetic`** — `~`-separated, used for prompted synthetic data:
+
+```
+id~speaker~lang~sr~samples~dur~phonemes~text
+spk01_001~spk01~en~24000~93000~3.875~_~A woman speaks warmly, "Hello, how are you today?"
+```
+
+**Format D — `libriheavy`** — `~`-separated, for unprompted text-only data:
+
+```
+id~speaker~lang~samples~dur_ms~phonemes~text
+spk01_001~spk01~en~93000~3875~_~Hello, how are you today?
+```
+
+### 2. Preprocess
 
 ```bash
-# 1. Preprocess raw (audio, transcript) pairs → audio_latents/ + conditions/
 python src/preprocess.py \
   --dataset-type manifest \
   --index your_data.jsonl \
+  --audio-dir /path/to/wavs \
   --output-dir /path/to/preprocessed/ \
-  --checkpoint dramabox-audio-components.safetensors \
-  --gemma-root /path/to/gemma-3-12b-it-bnb-4bit/
-
-# 2. Edit configs/training_args.example.yaml → your data paths
-
-# 3. Launch (uses HuggingFace accelerate)
-bash scripts/train.sh \
-  --config configs/training_args.example.yaml \
-  --gpus 0,1,2,3,4,5,6 \
-  --train-val-gpu 7
+  --checkpoint /path/to/dramabox-audio-components.safetensors \
+  --gemma-root /path/to/gemma-3-12b-it-bnb-4bit/ \
+  --max-duration 20.0 --min-duration 2.0
 ```
 
-| Script | Purpose |
-|---|---|
-| `src/preprocess.py` | Encode audio (Audio VAE) + text (Gemma) into training-ready `.pt` files |
-| `src/train.py` | IC-LoRA training loop with peft, accelerate multi-GPU, periodic validation |
-| `src/validate.py` | Spawned by `train.py` at each save step; runs the warm validator on a held-out prompt set |
-| `scripts/train.sh` | YAML-config wrapper around `accelerate launch src/train.py` |
+Output layout (training-ready `.pt` files):
 
-LoRA targets the audio branch only: `audio_attn1.{to_q,to_k,to_v,to_out.0}` + `audio_ff.{net.0.proj,net.2}` × 48 transformer blocks (288 LoRA pairs total). Default rank 128 / alpha 128 / dropout 0.1, cosine LR schedule from 1e-4 with 500-step warmup over 10k steps.
+```
+preprocessed/
+├── audio_latents/sample_*.pt     # Audio VAE-encoded latents
+├── conditions/sample_*.pt        # Gemma text embeddings
+└── latents/sample_*.pt           # Dummy video latents (placeholder)
+```
+
+### 3. Train
+
+Copy `configs/training_args.example.yaml`, point `data_dir` / `speaker_index` at your preprocessed output, set `checkpoint` + `full_checkpoint` to the DramaBox files, then launch with HuggingFace `accelerate`. Any flag passed on the CLI overrides the YAML.
+
+```bash
+accelerate launch src/train.py \
+  --config configs/training_args.example.yaml
+```
+
+The trainer attaches a fresh LoRA to the audio branch on top of the DramaBox checkpoint. LoRA targets: `audio_attn1.{to_q,to_k,to_v,to_out.0}` + `audio_ff.{net.0.proj,net.2}` × 48 transformer blocks (288 LoRA pairs total). Default rank 128 / alpha 128 / dropout 0.1, cosine LR schedule from 1e-4 with 500-step warmup over 10k steps.
+
+To monitor training, set `val_config: configs/val_config.example.yaml` in your training YAML — `src/validate.py` is then spawned at every save step to generate one wav per speaker entry, so you can A/B listen during the run.
+
+### Inference with your trained LoRA
+
+```bash
+python src/inference.py \
+  --lora /path/to/your/lora_step_5000.safetensors \
+  --voice-sample reference.wav \
+  --prompt 'A woman speaks warmly, "..."' \
+  --output output.wav
+```
+
+Always load the LoRA at inference rather than pre-merging it — pre-merged checkpoints have produced degraded output in our runs.
 
 ## Language
 

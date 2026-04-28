@@ -53,9 +53,11 @@ DEFAULT_NEG = "worst quality, inconsistent, robotic, distorted, noise, static, m
 
 
 def estimate_duration(prompt, multiplier=1.1):
-    quoted = re.findall(r'"([^"]*)"', prompt) or re.findall(r"'([^']*)'", prompt)
-    text = " ".join(quoted) if quoted else prompt
-    return max(3.0, round((len(text) * 0.065 + 1.5) * multiplier, 1))
+    """Defer to the richer CLI estimator (sentence-aware + non-verbal action
+    budget) so warm-server outputs match the lengths of the per-call CLI runs."""
+    from inference import estimate_speech_duration
+    base = estimate_speech_duration(prompt)
+    return max(3.0, round(base * multiplier, 1))
 
 
 class TTSServer:

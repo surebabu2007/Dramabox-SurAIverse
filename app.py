@@ -22,78 +22,86 @@ from model_downloader import get_all_paths  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.info("Fetching DramaBox checkpoints from HuggingFace (cached after first run)...")
-PATHS = get_all_paths()  # CPU-side download is fine outside the GPU window
+PATHS = get_all_paths()
 
-# Lazy-loaded inside the @spaces.GPU function (no GPU available at import time on ZeroGPU).
-_TTS: TTSServer | None = None
-
-
-def _ensure_tts() -> TTSServer:
-    global _TTS
-    if _TTS is None:
-        logging.info("Loading DramaBox warm server (Gemma + DiT + VAE + Decoder)...")
-        _TTS = TTSServer(
-            checkpoint=PATHS["transformer"],
-            full_checkpoint=PATHS["audio_components"],
-            gemma_root=PATHS["gemma_root"],
-            device="cuda",
-            dtype=os.environ.get("LTX_DTYPE", "bf16"),
-            compile_model=False,                  # torch.compile breaks under ZeroGPU's brief GPU windows
-            bnb_4bit=True,                        # unsloth Gemma is pre-quantized
-        )
-        logging.info("TTSServer ready.")
-    return _TTS
+# Module-level warm load (same pattern as IndexTTS-2-Demo on ZeroGPU). The
+# `spaces` package patches torch so that .to("cuda") at import time pins the
+# weights into ZeroGPU's shared memory; each @spaces.GPU call then maps them
+# onto the actual GPU instantly. First user request is ~2.5 s instead of ~30 s.
+logging.info("Loading DramaBox warm server (Gemma + DiT + VAE + Decoder)...")
+tts = TTSServer(
+    checkpoint=PATHS["transformer"],
+    full_checkpoint=PATHS["audio_components"],
+    gemma_root=PATHS["gemma_root"],
+    device="cuda",
+    dtype=os.environ.get("LTX_DTYPE", "bf16"),
+    compile_model=False,                  # torch.compile breaks under ZeroGPU's brief GPU windows
+    bnb_4bit=True,                        # unsloth Gemma is pre-quantized
+)
+logging.info("TTSServer ready.")
 
 
-# ── Example prompts (shown as click-to-fill chips in the UI) ─────────────────
-EXAMPLES: list[tuple[str, str]] = [
+# ── Example prompts shipped with a matching voice reference ──────────────────
+# Files live under assets/voices/ so users can click a row and generate
+# without uploading anything.
+_VOICES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "voices")
+
+EXAMPLES: list[tuple[str, str, str]] = [
     (
         "Villain monologue",
+        os.path.join(_VOICES_DIR, "male_harvey_keitel.mp3"),
         'A shadowy villain speaks with cold menace, "You have entered my domain, mortal." '
         'He chuckles darkly, "Such arrogance will be your undoing." '
-        'His voice rises with fury, "Kneel, or be destroyed where you stand!"'
+        'His voice rises with fury, "Kneel, or be destroyed where you stand!"',
     ),
     (
         "Talk-show host wheeze-laugh",
+        os.path.join(_VOICES_DIR, "male_conan.mp3"),
         'A talk show host gasps with shock, "No! You did NOT just say that!" '
         'He bursts into uncontrollable laughter, "Hahaha! Oh my god, oh my god!" '
-        'He wheezes, "I cannot, I literally cannot breathe right now!"'
+        'He wheezes, "I cannot, I literally cannot breathe right now!"',
     ),
     (
         "Tender goodnight whisper",
+        os.path.join(_VOICES_DIR, "female_shadowheart.wav"),
         'A woman speaks tenderly, "It has been a long day, my love." '
         'She whispers, "Close your eyes. I am right here." '
-        'She hums quietly, "Mmmm-mmm. Sleep now."'
+        'She hums quietly, "Mmmm-mmm. Sleep now."',
     ),
     (
         "Old-school radio anchor",
+        os.path.join(_VOICES_DIR, "male_old_movie.wav"),
         'A radio host clears his throat, "Excuse me, pardon that." '
         'He settles into a warm, professional tone, "Good evening everyone, '
-        'and welcome back to the show. We have got a wonderful lineup tonight."'
+        'and welcome back to the show. We have got a wonderful lineup tonight."',
     ),
     (
         "Catgirl uncontrollable giggling",
+        os.path.join(_VOICES_DIR, "female_american.wav"),
         'A playful girl already mid-giggle, "Hehehe, oh my gosh you should see your face!" '
         'She gasps for air between giggles, "Oh my, hehe, oh my, I cannot stop!" '
-        'She tries to compose herself, "Ahhhhh okay okay okay, I will stop, I promise."'
+        'She tries to compose herself, "Ahhhhh okay okay okay, I will stop, I promise."',
     ),
     (
         "Hero stammering courage",
+        os.path.join(_VOICES_DIR, "male_arnie.mp3"),
         'A young warrior speaks with a trembling voice, "I... I do not know if I can do this." '
         'He takes a shaky breath, "But someone has to try." '
-        'His voice steadies with growing fire, "No more running. I WILL fight!"'
+        'His voice steadies with growing fire, "No more running. I WILL fight!"',
     ),
     (
         "Exhausted dad, fraying patience",
+        os.path.join(_VOICES_DIR, "male_petergriffin.wav"),
         'An exhausted father speaks with fraying patience, "Sweetie, daddy is asking very nicely." '
         'He sighs deeply, "Ohhhh my goodness." '
         'He puts on an overly cheerful voice, "Hey buddy! Look at the shiny thing!" '
-        'Then he laughs helplessly, "Hahaha, I am losing my mind."'
+        'Then he laughs helplessly, "Hahaha, I am losing my mind."',
     ),
     (
         "Smug-confident announcer",
+        os.path.join(_VOICES_DIR, "male_samuel_j.mp3"),
         'A confident announcer speaks proudly, "And now, the moment you have all been waiting for." '
-        'He chuckles knowingly, "Heheh, trust me, this one is going to blow you away."'
+        'He chuckles knowingly, "Heheh, trust me, this one is going to blow you away."',
     ),
 ]
 
@@ -103,7 +111,6 @@ def on_generate(prompt: str, audio_ref, cfg: float, stg: float, dur_mult: float,
     if not prompt or not prompt.strip():
         raise gr.Error("Prompt is empty.")
     t0 = time.time()
-    tts = _ensure_tts()
     ref_path = audio_ref if audio_ref and os.path.exists(str(audio_ref)) else None
     output = tempfile.mktemp(suffix=".wav", prefix="dramabox_")
     tts.generate_to_file(
@@ -139,12 +146,8 @@ with gr.Blocks(
         with gr.Column(scale=3):
             prompt_box = gr.Textbox(
                 label="Scene prompt",
-                placeholder=EXAMPLES[0][1],
+                placeholder=EXAMPLES[0][2],
                 lines=6, elem_classes=["prompt-box"],
-            )
-            example_chooser = gr.Dropdown(
-                choices=[e[0] for e in EXAMPLES],
-                label="Load an example prompt", interactive=True, value=None,
             )
             audio_ref = gr.Audio(
                 label="Voice reference (optional, 10+ seconds)",
@@ -171,19 +174,29 @@ with gr.Blocks(
                     "**Avoid inside quotes:** Ahem, Pfft, Sigh, Gasp, Cough — the model speaks them literally."
                 )
 
-    def _load_example(choice: str):
-        if not choice:
-            return gr.update()
-        for name, prompt in EXAMPLES:
-            if name == choice:
-                return prompt
-        return gr.update()
-
-    example_chooser.change(_load_example, inputs=[example_chooser], outputs=[prompt_box])
     gen_btn.click(
         on_generate,
         inputs=[prompt_box, audio_ref, cfg_slider, stg_slider, dur_slider, seed_input],
         outputs=[audio_out],
+    )
+
+    # Click-to-generate example table. Each row preloads a paired voice
+    # reference + prompt and runs the model immediately.
+    gr.Examples(
+        label="🎬 Click any row to generate a sample",
+        examples=[
+            [name, prompt, voice_path, 2.5, 1.5, 1.1, 42]
+            for name, voice_path, prompt in EXAMPLES
+        ],
+        example_labels=[name for name, _, _ in EXAMPLES],
+        inputs=[gr.Textbox(visible=False, label="Scene"),
+                prompt_box, audio_ref,
+                cfg_slider, stg_slider, dur_slider, seed_input],
+        outputs=[audio_out],
+        fn=lambda _name, prompt, ref, cfg, stg, dur, seed: on_generate(prompt, ref, cfg, stg, dur, seed),
+        cache_examples=False,
+        run_on_click=True,
+        examples_per_page=20,
     )
 
 

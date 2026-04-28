@@ -363,26 +363,36 @@ class PromptEncoder:
                 self._warm_text_encoder = self._text_encoder_builder.build(
                     device=self._device, dtype=self._dtype
                 ).eval()
-            self._warm_embeddings_processor = self._embeddings_processor_builder.build(
+            built_ep = self._embeddings_processor_builder.build(
                 device=self._device, dtype=self._dtype
-            ).to(self._device).eval()
+            )
 
-            # Audio-only mode: delete video components to free ~4.8GB VRAM
-            if audio_only and self._warm_embeddings_processor is not None:
+            # Audio-only mode: delete video components BEFORE .to(device).
+            # This both frees ~4.8GB VRAM at load time and lets us strip
+            # text_embedding_projection.video_aggregate_embed.* from the
+            # checkpoint on disk (otherwise those tensors stay on the meta
+            # device and .to(device) errors with "cannot copy out of meta").
+            if audio_only:
                 import logging as _log
-                ep = self._warm_embeddings_processor
+                ep = built_ep
                 freed = 0
 
                 # 1. Replace video_connector with None and patch create_embeddings
                 if ep.video_connector is not None:
-                    freed += sum(p.numel() * p.element_size() for p in ep.video_connector.parameters())
+                    try:
+                        freed += sum(p.numel() * p.element_size() for p in ep.video_connector.parameters() if not p.is_meta)
+                    except Exception:
+                        pass
                     del ep.video_connector
                     ep.video_connector = None
 
                 # 2. Replace video_aggregate_embed with a dummy that returns zeros
                 fe = ep.feature_extractor
                 if hasattr(fe, 'video_aggregate_embed') and fe.video_aggregate_embed is not None:
-                    freed += sum(p.numel() * p.element_size() for p in fe.video_aggregate_embed.parameters())
+                    try:
+                        freed += sum(p.numel() * p.element_size() for p in fe.video_aggregate_embed.parameters() if not p.is_meta)
+                    except Exception:
+                        pass
                     out_features = fe.video_aggregate_embed.out_features
                     del fe.video_aggregate_embed
                     # Dummy that returns zeros with correct shape
@@ -394,6 +404,12 @@ class PromptEncoder:
                             return torch.zeros(x.shape[0], x.shape[1], self.out_features,
                                              device=x.device, dtype=x.dtype)
                     fe.video_aggregate_embed = _DummyVideoEmbed(out_features)
+
+            # Now move the (post-strip) module onto the target device.
+            self._warm_embeddings_processor = built_ep.to(self._device).eval()
+
+            if audio_only and self._warm_embeddings_processor is not None:
+                ep = self._warm_embeddings_processor
 
                 # 3. Patch create_embeddings to skip video connector
                 _orig_create = ep.create_embeddings
