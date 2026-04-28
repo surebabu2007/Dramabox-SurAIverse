@@ -1,6 +1,8 @@
 torch==2.4.0
 torchaudio==2.4.0
 pydantic==2.10.6
+starlette<1.0
+fastapi<0.116
 safetensors>=0.4.0
 accelerate>=0.25.0
 peft>=0.7.0
