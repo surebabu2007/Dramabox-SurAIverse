@@ -608,10 +608,26 @@ def main():
     audio_state = audio_tools.unpatchify(audio_state)
     logging.info(f"Final latent shape: {audio_state.latent.shape}")
 
+    # ---- End-of-clip silence-prior fix ----
+    # Base LTX-2.3 22B was trained on audio clips ≤ ~20 s and learned a strong
+    # "clip-end silence" prior at the next patchifier-aligned latent boundary
+    # (frame 513 = 8 × 64 + 1). For longer outputs that prior leaks through as
+    # a ~30 ms hard silence dip near 20.4 s. Linearly interpolating frames
+    # 512–513 between their neighbours (511 and 514) removes the dip cleanly.
+    latent_in = audio_state.latent
+    if latent_in.shape[2] > 513:
+        f0, f1 = 511, 514
+        n = f1 - f0
+        patched = latent_in.clone()
+        for f in (512, 513):
+            t = (f - f0) / n
+            patched[:, :, f, :] = (1.0 - t) * latent_in[:, :, f0, :] + t * latent_in[:, :, f1, :]
+        latent_in = patched
+
     # ---- Decode audio ----
     logging.info("Decoding audio...")
     ad = AudioDecoder(checkpoint_path=args.full_checkpoint, dtype=dtype, device=device)
-    decoded = ad(audio_state.latent)
+    decoded = ad(latent_in)
     del ad
     torch.cuda.empty_cache()
 

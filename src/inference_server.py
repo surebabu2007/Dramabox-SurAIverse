@@ -259,8 +259,28 @@ class TTSServer:
         audio_state = audio_tools.clear_conditioning(audio_state)
         audio_state = audio_tools.unpatchify(audio_state)
 
+        # End-of-clip silence-prior fix.
+        # The base LTX-2.3 22B DiT was trained on audio clips ≤ ~20 s and
+        # learned a strong "clip-end silence" prior that lands on the next
+        # patchifier-aligned latent frame after 20 s — index 513 = 8*64+1.
+        # When inference produces longer audio, this prior leaks through as a
+        # high-norm latent burst at frame 513 (and adjacent 512), which the
+        # audio VAE + vocoder render as a ~30 ms hard silence dip near 20.4 s.
+        # Linear interpolation across the two affected frames removes the dip
+        # cleanly without any retraining. Only runs when the latent is long
+        # enough to actually contain the boundary.
+        latent = audio_state.latent
+        if latent.shape[2] > 513:
+            f0, f1 = 511, 514          # neighbours used for interpolation
+            n = f1 - f0                # = 3
+            patched = latent.clone()
+            for f in (512, 513):
+                t = (f - f0) / n
+                patched[:, :, f, :] = (1.0 - t) * latent[:, :, f0, :] + t * latent[:, :, f1, :]
+            latent = patched
+
         t0 = time.time()
-        decoded = self._audio_decoder(audio_state.latent)
+        decoded = self._audio_decoder(latent)
         logging.info(f"Decode: {time.time()-t0:.2f}s")
 
         total = time.time() - t_total
