@@ -110,6 +110,37 @@ print(detector.get_watermark(wav, sample_rate=sr))   # confidence ≈ 1.0
 
 Pass `--no-watermark` to `inference.py` (or `watermark=False` to `generate_to_file`) to disable for debugging.
 
+## Voice reference denoising (RE-USE)
+
+The voice reference is denoised with [`nvidia/RE-USE`](https://huggingface.co/nvidia/RE-USE) before VAE conditioning. On (defaults to `True`):
+
+```python
+server.generate_to_file(
+    prompt='A woman speaks warmly, "Hello."',
+    output="out.wav",
+    voice_ref="ref.wav",
+    denoise_ref=True,
+)
+```
+
+Setup is automatic — code (`.py` / `.yaml`, ~150 KB) is snapshot-downloaded into `~/.cache/dramabox/` on first call; weights (`~38 MB`) come from `SEMamba.from_pretrained` through the standard HF cache. Pass `$REUSE_DIR` or vendor at `third_party/RE-USE/` to skip the download.
+
+Optional kernels: `mamba-ssm` + `causal-conv1d`. If their wheels fail to build, the wrapper falls back to a pure-PyTorch path (5-10× slower, same output). RE-USE is [NSCLv1](https://github.com/NVlabs/HMAR/blob/main/LICENSE) (non-commercial) — set `denoise_ref=False` to skip.
+
+## Long-form generation (text chunking)
+
+The base LTX-2.3 audio DiT was trained on clips ≤ ~20 s. Generations up to ~45 s remain usable thanks to the silence-prior patch in `inference_server.py`, but quality drifts past that. For arbitrarily long prompts, `TTSServer` now chunks automatically:
+
+```python
+server.generate_to_file(
+    prompt=very_long_scene,        # 2 minutes worth of dialogue is fine
+    output="long.wav",
+    voice_ref="ref.wav",           # reused across every chunk → speaker stays coherent
+)
+```
+
+The chunker (`src/text_chunker.py:chunk_prompt_for_duration`) splits at sentence / quote-group boundaries, preserves the speaker-description prefix on every chunk, and targets ~37 s per chunk (≤45 s hard cap). `TTSServer.generate_long` then concatenates the per-chunk waveforms with a 50 ms equal-power crossfade so joins are inaudible. Set `max_chunk_duration=` / `target_chunk_duration=` on `generate_to_file` to tune.
+
 ## Training a LoRA on top of DramaBox
 
 You can fine-tune your own LoRA using DramaBox itself as the base — no need to start from raw LTX-2.3. Useful for adding a specific speaker, language flavour, or style on top of the existing expressive prior.
