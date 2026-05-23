@@ -122,7 +122,7 @@ class TTSServer:
         MODELS = APP_DIR / "models"
         self.checkpoint = checkpoint or str(MODELS / "ltx-2.3-22b-dev-audio-only-v13-merged.safetensors")
         self.full_checkpoint = full_checkpoint or os.environ.get(
-            "LTX_FULL_CHECKPOINT", "/mnt/persistent0/manmay/models/ltx23/ltx-2.3-22b-dev.safetensors")
+            "LTX_FULL_CHECKPOINT", str(MODELS / "ltx-2.3-22b-dev.safetensors"))
         if gemma_root is None and not os.environ.get("GEMMA_DIR"):
             from model_downloader import get_gemma_path
             gemma_root = get_gemma_path()
@@ -558,6 +558,7 @@ class TTSServer:
 
 if __name__ == "__main__":
     import argparse
+    import tempfile
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda")
     p.add_argument("--dtype", default="fp16", choices=["fp16", "bf16"])
@@ -565,23 +566,38 @@ if __name__ == "__main__":
     p.add_argument("--no-bnb-4bit", action="store_true",
                    help="Disable bitsandbytes 4-bit path (default: on, since the default "
                         "unsloth Gemma checkpoint is pre-quantized).")
+    p.add_argument("--warmup-voice-ref-1", default=os.environ.get("WARMUP_VOICE_REF_1"),
+                   help="Voice reference for the first warmup pass. If unset, the warmup "
+                        "pass is skipped. Env var: WARMUP_VOICE_REF_1.")
+    p.add_argument("--warmup-voice-ref-2", default=os.environ.get("WARMUP_VOICE_REF_2"),
+                   help="Voice reference for the second warmup pass. If unset, the warmup "
+                        "pass is skipped. Env var: WARMUP_VOICE_REF_2.")
+    p.add_argument("--warmup-output-dir", default=os.environ.get("WARMUP_OUTPUT_DIR", tempfile.gettempdir()),
+                   help="Directory to write warmup test outputs. "
+                        "Defaults to the system temp dir. Env var: WARMUP_OUTPUT_DIR.")
     args = p.parse_args()
 
     server = TTSServer(device=args.device, dtype=args.dtype, compile_model=not args.no_compile,
                        bnb_4bit=not args.no_bnb_4bit)
 
     # First call - includes any warmup
-    logging.info("=== First request ===")
-    server.generate_to_file(
-        prompt='A woman speaks clearly, "The weather today will be sunny."',
-        output="/tmp/warm_test1.wav",
-        voice_ref="/mnt/persistent0/manmay/expressive/female_radio_nikole/female_radio_nikole.wav",
-    )
+    if args.warmup_voice_ref_1:
+        logging.info("=== First request ===")
+        server.generate_to_file(
+            prompt='A woman speaks clearly, "The weather today will be sunny."',
+            output=os.path.join(args.warmup_output_dir, "warm_test1.wav"),
+            voice_ref=args.warmup_voice_ref_1,
+        )
+    else:
+        logging.info("Skipping first warmup pass (no --warmup-voice-ref-1 / WARMUP_VOICE_REF_1).")
 
     # Second call - should be much faster (models already warm)
-    logging.info("\n=== Second request (warm) ===")
-    server.generate_to_file(
-        prompt='A man speaks excitedly, "This is amazing, I cannot believe it!"',
-        output="/tmp/warm_test2.wav",
-        voice_ref="/mnt/persistent0/manmay/expressive/male_arnie/male_arnie.mp3",
-    )
+    if args.warmup_voice_ref_2:
+        logging.info("\n=== Second request (warm) ===")
+        server.generate_to_file(
+            prompt='A man speaks excitedly, "This is amazing, I cannot believe it!"',
+            output=os.path.join(args.warmup_output_dir, "warm_test2.wav"),
+            voice_ref=args.warmup_voice_ref_2,
+        )
+    else:
+        logging.info("Skipping second warmup pass (no --warmup-voice-ref-2 / WARMUP_VOICE_REF_2).")

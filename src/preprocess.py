@@ -18,9 +18,9 @@ Supports multiple dataset formats:
 Usage:
     python preprocess_tts_data.py \
         --dataset-type gemini_synthetic \
-        --index /mnt/large-datasets/gemini_synthetic_dataset/conversational_dataset_pp/index.txt \
-        --audio-dir /mnt/large-datasets/gemini_synthetic_dataset/conversational_dataset_pp/wavs \
-        --output-dir /mnt/persistent0/manmay/tts_training_data \
+        --index /path/to/dataset/index.txt \
+        --audio-dir /path/to/dataset/wavs \
+        --output-dir /path/to/output/tts_training_data \
         --max-samples 10000 \
         --max-duration 20.0 \
         --min-duration 3.0
