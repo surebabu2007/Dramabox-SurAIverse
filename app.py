@@ -321,7 +321,7 @@ with gr.Blocks(
                                                  "uploaded voice reference the model conditions on")
                 seed_input = gr.Number(value=42, label="Seed", precision=0)
                 denoise_ref_check = gr.Checkbox(
-                    value=True,
+                    value=False,  # RE-USE has no Windows wheels; leave off locally
                     label="Denoise voice reference (RE-USE on input)",
                     info=("Run RE-USE on the uploaded voice reference before "
                           "conditioning. The model generalises a cleaner speaker / "

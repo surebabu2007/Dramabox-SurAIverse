@@ -540,6 +540,16 @@ class TTSServer:
                     pass
             waveform, sr = self.generate(prompt, **kwargs)
         wav_cpu = waveform.cpu().float()
+        if not torch.isfinite(wav_cpu).all():
+            bad = (~torch.isfinite(wav_cpu)).sum().item()
+            logging.warning(
+                f"Non-finite samples in waveform ({bad}); replacing with 0. "
+                "If this persists, use LTX_DTYPE=bf16 (fp16 can NaN on this model)."
+            )
+            wav_cpu = torch.nan_to_num(wav_cpu, nan=0.0, posinf=0.0, neginf=0.0)
+        peak = wav_cpu.abs().max().item()
+        if peak > 1.0:
+            wav_cpu = wav_cpu / peak
         if watermark:
             try:
                 import numpy as np, perth

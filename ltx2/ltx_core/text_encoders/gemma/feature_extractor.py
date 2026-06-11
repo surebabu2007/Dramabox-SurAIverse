@@ -83,6 +83,27 @@ def _rescale_norm(x: torch.Tensor, target_dim: int, source_dim: int) -> torch.Te
     return x * math.sqrt(target_dim / source_dim)
 
 
+def _align_hidden_layer_count(encoded: torch.Tensor, expected_in_features: int) -> torch.Tensor:
+    """Trim stacked Gemma hidden states to match aggregate_embed.in_features.
+
+    Newer transformers builds can return a few extra intermediate hidden states
+    for Gemma 3; the DramaBox checkpoint expects exactly
+    ``hidden_size * (num_hidden_layers + 1)`` layers concatenated.
+    """
+    hidden_dim = encoded.shape[2]
+    expected_layers = expected_in_features // hidden_dim
+    actual_layers = encoded.shape[-1]
+    if actual_layers == expected_layers:
+        return encoded
+    if actual_layers > expected_layers:
+        return encoded[..., :expected_layers]
+    raise ValueError(
+        f"Gemma returned {actual_layers} hidden-state layers but the checkpoint "
+        f"expects {expected_layers} (in_features={expected_in_features}, "
+        f"hidden_dim={hidden_dim})."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Feature extractor variants
 # ---------------------------------------------------------------------------
@@ -100,6 +121,7 @@ class FeatureExtractorV1(nn.Module):
         self, hidden_states: torch.Tensor, attention_mask: torch.Tensor, padding_side: str = "left"
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         encoded = torch.stack(hidden_states, dim=-1) if isinstance(hidden_states, (list, tuple)) else hidden_states
+        encoded = _align_hidden_layer_count(encoded, self.aggregate_embed.in_features)
         dtype = encoded.dtype
         sequence_lengths = attention_mask.sum(dim=-1)
         normed = _norm_and_concat_padded_batch(encoded, sequence_lengths, padding_side)
@@ -130,6 +152,8 @@ class FeatureExtractorV2(nn.Module):
         padding_side: str = "left",  # noqa: ARG002
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         encoded = torch.stack(hidden_states, dim=-1) if isinstance(hidden_states, (list, tuple)) else hidden_states
+        expected_in = self.audio_aggregate_embed.in_features if self.audio_aggregate_embed is not None else self.video_aggregate_embed.in_features
+        encoded = _align_hidden_layer_count(encoded, expected_in)
         normed = norm_and_concat_per_token_rms(encoded, attention_mask)
         normed = normed.to(encoded.dtype)
         v_dim = self.video_aggregate_embed.out_features
