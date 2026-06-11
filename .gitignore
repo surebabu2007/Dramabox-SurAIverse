@@ -3,9 +3,16 @@ __pycache__/
 *.pyo
 *.egg-info/
 .cache/
+venv/
 models/*.safetensors
 *.log
 .DS_Store
+
+# Claude Code local settings/state.
+.claude/
+
+# Packaged release zips from make_release.ps1.
+dist/
 
 # Vendored third-party trees fetched at install time (RE-USE, AP-BWE, AudioSR).
 # Code/configs are re-snapshotted on demand via src/model_downloader.py:get_reuse_code_path.

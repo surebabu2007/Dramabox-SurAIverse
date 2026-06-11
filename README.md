@@ -35,6 +35,137 @@ Auto-downloaded from the HF model repo on first run.
 
 **VRAM**: ~24 GB peak · **Speed**: ~2.5 s / generation (warm server, H100)
 
+## Quick Install (Windows)
+
+The fastest way to get DramaBox running on a fresh machine:
+
+1. Download or clone this repository.
+2. Double-click **`Install.bat`**.
+   - Installs Python 3.11, Git, and FFmpeg if missing (via `winget`), creates a
+     `venv\`, and installs all dependencies (PyTorch with CUDA 12.8 support,
+     then the rest of `requirements.txt`).
+   - Takes 5-15 minutes depending on your internet connection (~3-4 GB
+     download for PyTorch + dependencies).
+   - Creates a **DramaBox** shortcut on your Desktop.
+3. Double-click **`Launch.bat`** (or the new Desktop shortcut).
+   - First launch downloads ~17 GB of model weights (one-time, cached under
+     `%USERPROFILE%\.cache\dramabox\`).
+   - Once ready, open **http://127.0.0.1:7860** in your browser.
+
+**Requirements:** Windows 10/11, NVIDIA GPU with 24 GB VRAM (RTX 4090 or
+similar), ~40 GB free disk space.
+
+If `Install.bat` reports that `winget` is unavailable or a prerequisite
+failed to install (common on locked-down corporate machines), install it
+manually using the links the script prints, then re-run `Install.bat`:
+
+- Python 3.11: https://www.python.org/downloads/release/python-3119/ (check **"Add python.exe to PATH"**)
+- Git: https://git-scm.com/download/win
+- FFmpeg: https://www.gyan.dev/ffmpeg/builds/ (download "release full", extract, add the `bin\` folder to your PATH)
+
+To produce a shareable copy of the project (excluding `venv\` and generated
+audio), run `.\make_release.ps1` — it creates `dist\DramaBox-release.zip`.
+
+For full manual setup details, or if you'd rather install everything by hand,
+see the section below.
+
+## Windows install (NVIDIA GPU, 24 GB VRAM)
+
+> This section documents the manual steps that `Install.bat` automates above —
+> useful for troubleshooting or non-standard setups.
+
+Tested on **Windows 10/11** with an **RTX 4090 (24 GB)**. An RTX 4090 at 24 GB is at the documented peak VRAM — it works, but use the settings below.
+
+### Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| Python **3.11** | Avoid 3.13 — deps are tested on 3.11 |
+| Git | Required for `resemble-perth` |
+| FFmpeg on `PATH` | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) full build recommended |
+| ~35 GB free disk | ~17 GB model weights + ~8 GB Gemma + venv |
+| NVIDIA driver + CUDA | PyTorch 2.8 cu128 wheels bundle CUDA libs |
+
+### 1. Clone and create venv
+
+```powershell
+git clone https://github.com/resemble-ai/DramaBox.git
+cd DramaBox
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+### 2. Install CUDA PyTorch **before** other deps
+
+Plain `pip install -r requirements.txt` can pull a **CPU-only** torch from PyPI on Windows. Install GPU wheels first:
+
+```powershell
+pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+Expected: `True` and your GPU name (e.g. `NVIDIA GeForce RTX 4090`).
+
+**Pin `torchaudio==2.8.0`** — newer torchaudio (2.11+) pulls in `torchcodec`, which is painful on Windows.
+
+### 3. Install remaining dependencies
+
+Comment out the first two lines of `requirements.txt` (`torch` / `torchaudio`), then:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Or install manually (skip torch lines):
+
+```powershell
+pip install safetensors accelerate peft av einops PyYAML sentencepiece "transformers>=4.45.0" "huggingface_hub>=0.20.0,<1.0" bitsandbytes gradio==5.7.1 spaces soundfile pydantic==2.10.6
+pip install "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@master"
+```
+
+**Do not install** `requirements-reuse.txt` on Windows (see [RE-USE](#voice-reference-denoising-re-use) below).
+
+### 4. Launch Gradio (recommended)
+
+Use the included launcher — it sets the correct dtype and env vars:
+
+```powershell
+.\launch.ps1
+```
+
+Open **`http://127.0.0.1:7860`** in your browser (not `0.0.0.0:7860`).
+
+First launch downloads ~16 GB of weights into `%USERPROFILE%\.cache\dramabox\` and loads Gemma + DiT (~3–5 minutes). Subsequent starts are much faster.
+
+**Environment variables** (set automatically by `launch.ps1`):
+
+| Variable | Value | Why |
+|---|---|---|
+| `LTX_DTYPE` | `bf16` | **Required** — see [Troubleshooting](#troubleshooting-windows) |
+| `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` | Reduces VRAM fragmentation on 24 GB |
+| `GRADIO_SHARE` | `0` | Local-only UI (no public gradio.live link) |
+| `PYTHONIOENCODING` | `utf-8` | Avoids Gradio client encoding errors |
+
+Verify CUDA anytime:
+
+```powershell
+.\test_cuda.ps1
+```
+
+### 5. Example prompt
+
+```
+A radio host clears his throat, "This is bindu from flat 340 " He settles into a warm, professional tone, "Good evening everyone, and welcome back to the show. We have got a wonderful lineup tonight."
+```
+
+Generated WAV files are saved under [`output/`](output/).
+
+### Windows limitations
+
+- **RE-USE voice-reference denoising** (`mamba-ssm` / `causal-conv1d`) has no Windows wheels. Leave **Denoise voice reference** unchecked in the Gradio UI — voice cloning still works without it.
+- **Symlink warning** from Hugging Face cache on Windows is harmless; enable Developer Mode or run as admin to silence it.
+
 ## Quick Start
 
 ### Warm server (recommended)
@@ -63,8 +194,19 @@ python src/inference.py \
 
 ### Gradio app
 
+**Windows** (recommended):
+
+```powershell
+.\launch.ps1
+# → http://127.0.0.1:7860
+```
+
+**Linux / manual:**
+
 ```bash
-CUDA_VISIBLE_DEVICES=4 python app.py
+export LTX_DTYPE=bf16
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+CUDA_VISIBLE_DEVICES=0 python app.py
 ```
 
 ## Inference Settings
@@ -244,6 +386,65 @@ python src/inference.py \
 ```
 
 Always load the LoRA at inference rather than pre-merging it — pre-merged checkpoints have produced degraded output in our runs.
+
+## Troubleshooting (Windows)
+
+### No audio / silent WAV files
+
+**Symptom:** Generation completes, but the player is silent. Logs may show:
+
+```
+Perth watermark skipped (Audio buffer is not finite everywhere)
+```
+
+**Cause:** `LTX_DTYPE=fp16`. DramaBox / LTX-2.3 is trained in **bfloat16**; fp16 causes the vocoder to output all-NaN waveforms.
+
+**Fix:** Use **`bf16`** (default in `launch.ps1`):
+
+```powershell
+$env:LTX_DTYPE = "bf16"
+.\launch.ps1
+```
+
+Never set `LTX_DTYPE=fp16` on this setup.
+
+### Generation very slow or UI appears frozen
+
+**Symptom:** A short prompt takes minutes instead of ~10–20 s.
+
+**Cause:** VRAM maxed out (~24 / 24 GB) after multiple runs or overlapping Generate clicks.
+
+**Fix:**
+
+1. Close other GPU apps (games, ComfyUI, etc.).
+2. Restart the server: stop `python app.py`, then `.\launch.ps1`.
+3. Wait for one job to finish before clicking Generate again.
+
+### `mat1 and mat2 shapes cannot be multiplied` (188160×…)
+
+**Cause:** Gemma hidden-state layer count mismatch with the embeddings processor (transformers version drift).
+
+**Fix:** The repo includes a patch in `ltx2/ltx_core/text_encoders/gemma/feature_extractor.py` that trims extra layers. Pull latest or ensure that file is present, then restart.
+
+### CUDA not detected
+
+```powershell
+.\test_cuda.ps1
+```
+
+If `cuda_available False`, reinstall GPU PyTorch (step 2 above) **before** other packages. Uninstall CPU torch first if needed:
+
+```powershell
+pip uninstall torch torchaudio -y
+pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
+### Voice cloning tips
+
+- Upload a clean **10+ second WAV** as voice reference.
+- Leave **Denoise voice reference** unchecked on Windows.
+- Match gender/age in the prompt to the reference voice.
+- Put spoken lines **inside double quotes**; stage directions go outside (see [Prompt Writing Guide](#prompt-writing-guide)).
 
 ## Language
 
